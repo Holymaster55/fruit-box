@@ -8,22 +8,26 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
+// Middleware
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(bodyParser.json());
 
-const rooms = {};
-const highscoreMap = {};
+const rooms = {}; // Stores rooms and their data
+const highscoreMap = {}; // Stores highscores
 
+// Function to generate a solvable grid
 function generateSolvableGrid() {
   const COLS = 17;
   const ROWS = 10;
   const SIZE = COLS * ROWS;
   let nums = [];
+  
   for (let i = 1; i < 10; i++) {
     for (let j = 0; j < SIZE / 2 / 9; j++) {
       nums.push(i, 10 - i);
     }
   }
+  
   while (nums.length < SIZE) nums.push(5, 5);
   nums = nums.sort(() => Math.random() - 0.5);
 
@@ -34,18 +38,22 @@ function generateSolvableGrid() {
       grid[y][x] = nums.pop();
     }
   }
+  
   return grid;
 }
 
+// Handle new socket connections
 io.on('connection', (socket) => {
   console.log(`🟢 Connected: ${socket.id}`);
 
+  // Join a room
   socket.on('join', ({ roomCode, nickname }) => {
     socket.join(roomCode);
+
     if (!rooms[roomCode]) {
       rooms[roomCode] = {
         players: [],
-        grid: generateSolvableGrid()
+        grid: generateSolvableGrid(),
       };
     }
 
@@ -54,15 +62,13 @@ io.on('connection', (socket) => {
     console.log(`👤 ${nickname} joined room ${roomCode}`);
   });
 
+  // Handle ready button for multiplayer
   socket.on('ready', ({ roomCode }) => {
     const room = rooms[roomCode];
     if (!room) return;
 
     const player = room.players.find(p => p.id === socket.id);
     if (player) player.ready = true;
-
-    const readyStates = room.players.map(p => `${p.nickname}: ${p.ready}`).join(', ');
-    console.log(`📋 Ready check in room ${roomCode}: ${readyStates}`);
 
     const allReady = room.players.length > 1 && room.players.every(p => p.ready);
     if (allReady) {
@@ -71,10 +77,12 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle score updates in multiplayer mode
   socket.on('scoreUpdate', ({ roomCode, nickname, score }) => {
     socket.to(roomCode).emit('scoreUpdate', { nickname, score });
   });
 
+  // Disconnect socket handling
   socket.on('disconnect', () => {
     for (const roomCode in rooms) {
       const room = rooms[roomCode];
@@ -88,35 +96,38 @@ io.on('connection', (socket) => {
         console.log(`🧹 Cleaned up empty room: ${roomCode}`);
       }
     }
+
     console.log(`🔴 Disconnected: ${socket.id}`);
+  });
+
+  // Highscore tracking
+  socket.on('highscore', ({ nickname, score }) => {
+    if (!nickname || typeof score !== 'number') return;
+
+    if (!highscoreMap[nickname] || score > highscoreMap[nickname]) {
+      highscoreMap[nickname] = score;
+    }
+
+    io.emit('updateLeaderboard', Object.entries(highscoreMap).map(([nickname, score]) => ({ nickname, score })).sort((a, b) => b.score - a.score).slice(0, 20));
+  });
+
+  // Handle get leaderboard
+  socket.on('getLeaderboard', () => {
+    const leaderboard = Object.entries(highscoreMap)
+      .map(([nickname, score]) => ({ nickname, score }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20);
+
+    socket.emit('updateLeaderboard', leaderboard);
   });
 });
 
-// === Highscore Routes ===
-app.post('/highscore', (req, res) => {
-  const { nickname, score } = req.body;
-  if (!nickname || typeof score !== 'number') return res.sendStatus(400);
-
-  if (!highscoreMap[nickname] || score > highscoreMap[nickname]) {
-    highscoreMap[nickname] = score;
-  }
-
-  res.sendStatus(200);
+// Serve the game files and assets
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.get('/highscore/:nickname', (req, res) => {
-  const nickname = req.params.nickname;
-  res.json({ nickname, highscore: highscoreMap[nickname] || 0 });
-});
-
-app.get('/highscores', (req, res) => {
-  const highscores = Object.entries(highscoreMap)
-    .map(([nickname, score]) => ({ nickname, score }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 20);
-  res.json(highscores);
-});
-
+// Start the server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🌍 Server running at http://localhost:${PORT}`);
