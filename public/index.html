@@ -5,159 +5,219 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fruit Box - Multiplayer</title>
   <style>
-    body { font-family: sans-serif; text-align: center; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-    canvas { border: 2px solid #444; touch-action: none; display: none; margin: 20px auto; background-color: #f2f2f2; }
-    #score, #timer, #highscore { font-size: 1.5rem; margin: 10px; }
+    body { font-family: sans-serif; text-align: center; margin: 0; }
+    canvas { border: 2px solid #444; touch-action: none; display: none; margin-top: 10px; background-color: #f2f2f2; }
+    #score, #timer { font-size: 1.2rem; margin: 10px; }
     #popup { position: absolute; color: green; font-weight: bold; display: none; pointer-events: none; }
     button, input { margin: 5px; padding: 10px 20px; font-size: 1rem; }
     #startBtn:disabled { opacity: 0.5; }
-    #multiplayerForm, #singlePlayerForm { margin-top: 20px; }
+    #multiplayerForm { margin-top: 20px; }
     #readyBtn { display: none; }
     #opponentScore { font-size: 1.2rem; margin: 10px; color: #666; }
   </style>
 </head>
 <body>
   <h1>Fruit Box</h1>
-  <div id="modeSelect">
-    <button onclick="startSinglePlayer()">Single Player</button>
-    <button onclick="showMultiplayerForm()">Multiplayer</button>
-    <button onclick="viewLeaderboard()">Leaderboard</button>
-  </div>
-  <div id="singlePlayerForm" style="display: none;">
-    <input type="text" id="singleNickname" placeholder="Enter your nickname" />
-    <button onclick="startSinglePlayerGame()">Start Single Player</button>
-  </div>
-  <div id="multiplayerForm" style="display: none;">
+
+  <div id="multiplayerForm">
     <input type="text" id="nickname" placeholder="Enter your nickname" />
     <input type="text" id="roomCode" placeholder="Enter room code" />
     <button onclick="joinRoom()">Join Room</button>
-    <button onclick="createRoom()">Create New Room</button>
   </div>
+
   <div id="score">Score: 0</div>
-  <div id="highscore">Highscore: 0</div>
   <div id="opponentScore"></div>
   <div id="timer">Time: 120</div>
   <button id="startBtn" onclick="startGame()">Start</button>
   <button onclick="resetGame()">Reset</button>
   <button id="readyBtn" onclick="readyUp()">I'm Ready!</button>
-  <canvas id="game" width="800" height="500"></canvas>
+
+  <canvas id="game" width="578" height="340"></canvas>
   <div id="popup">+1</div>
-  <div id="leaderboard" style="display: none;">
-    <h2>Highscore Leaderboard</h2>
-    <ul id="leaderboardList"></ul>
-    <button onclick="goBackToMenu()">Back</button>
-  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
-    let currentRoom = null;
-    let singlePlayerNickname = '';
-    let score = 0;
-    let highscoreMap = {};
-    let isMultiplayer = false;
 
-    // Multiplayer room creation and joining
-    function createRoom() {
-      const roomCode = Math.random().toString(36).substring(2, 7); // generate a random room code
-      document.getElementById('roomCode').value = roomCode;
-      joinRoom(roomCode);
+    let multiplayer = false;
+    let nickname = "";
+    let roomCode = "";
+    let ready = false;
+    let opponentName = "";
+    let opponentScore = 0;
+    let sharedGrid = null;
+    let score = 0;
+
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const timerEl = document.getElementById('timer');
+    const popup = document.getElementById('popup');
+
+    const COLS = 17;
+    const ROWS = 10;
+    const SIZE = 34;
+
+    let grid = [];
+    let startX, startY, endX, endY;
+    let timerInterval;
+    let isDragging = false;
+    let highlightArea = null;
+    let fallingApples = [];
+
+    function joinRoom() {
+      nickname = document.getElementById('nickname').value.trim();
+      roomCode = document.getElementById('roomCode').value.trim();
+      if (!nickname || !roomCode) {
+        alert("Please enter both a nickname and room code.");
+        return;
+      }
+      multiplayer = true;
+      socket.emit('join', { nickname, roomCode });
+      document.getElementById('multiplayerForm').style.display = 'none';
+      document.getElementById('startBtn').style.display = 'none';
+      document.querySelector('button[onclick="resetGame()"]')?.remove();
+      document.getElementById('readyBtn').style.display = 'inline-block';
     }
 
-    function joinRoom(roomCode) {
-      const nickname = document.getElementById('nickname').value.trim();
-      if (!nickname) return alert("Enter a nickname");
-      socket.emit('join', { roomCode, nickname });
-      currentRoom = roomCode;
-      isMultiplayer = true;
-      document.getElementById('multiplayerForm').style.display = 'none';
-      canvas.style.display = 'block';
-      score = 0;
-      document.getElementById('score').textContent = `Score: ${score}`;
-      startTimer(120);
+    function readyUp() {
+      ready = true;
+      document.getElementById('readyBtn').disabled = true;
+      document.getElementById('readyBtn').innerText = "Waiting for other players...";
       socket.emit('ready', { roomCode });
     }
 
-    // Update highscore system for both single player and multiplayer
-    function updateHighscore() {
-      const nickname = isMultiplayer ? document.getElementById('nickname').value.trim() : singlePlayerNickname;
-      if (nickname && (!highscoreMap[nickname] || score > highscoreMap[nickname])) {
-        highscoreMap[nickname] = score;
-        socket.emit('highscore', { nickname, score });
-      }
-      document.getElementById('highscore').textContent = `Highscore: ${highscoreMap[nickname] || 0}`;
-    }
-
-    // Get and display leaderboard
-    function viewLeaderboard() {
-      document.getElementById('modeSelect').style.display = 'none';
-      document.getElementById('leaderboard').style.display = 'block';
-      socket.emit('getLeaderboard');
-    }
-
-    function goBackToMenu() {
-      document.getElementById('leaderboard').style.display = 'none';
-      document.getElementById('modeSelect').style.display = 'block';
-    }
-
-    socket.on('updateLeaderboard', (leaderboard) => {
-      const leaderboardList = document.getElementById('leaderboardList');
-      leaderboardList.innerHTML = '';
-      leaderboard.forEach(entry => {
-        const li = document.createElement('li');
-        li.textContent = `${entry.nickname}: ${entry.score}`;
-        leaderboardList.appendChild(li);
-      });
-    });
-
-    // Event listeners for multiplayer communication
     socket.on('startGame', (data) => {
-      startGame(data);
-    });
-    socket.on('scoreUpdate', (scoreData) => {
-      document.getElementById('opponentScore').textContent = `Opponent Score: ${scoreData.score}`;
+      alert('All players ready! Game starting...');
+      sharedGrid = data.grid;
+      grid = sharedGrid;
+      startGame();
     });
 
-    // --- Game logic ---
-    const canvas = document.getElementById('game');
-    const ctx = canvas.getContext('2d');
-    const SIZE = 40;
-    const COLS = 17;
-    const ROWS = 10;
-    let grid = Array.from({ length: ROWS }, () => Array.from({ length: COLS }, () => Math.ceil(Math.random() * 9)));
-    let highlightArea = null;
-    let fallingApples = [];
-    let startX, startY, endX, endY;
-    let isDragging = false;
+    socket.on('players', players => {
+      const other = players.find(p => p.nickname !== nickname);
+      opponentName = other ? other.nickname : "";
+      updateOpponentScore();
+    });
+
+    function updateOpponentScore() {
+      if (opponentName) {
+        document.getElementById('opponentScore').innerText = `${opponentName}'s Score: ${opponentScore}`;
+      }
+    }
+
+    function sendScoreUpdate() {
+      if (multiplayer) {
+        socket.emit('scoreUpdate', { roomCode, nickname, score });
+      }
+    }
+
+    socket.on('scoreUpdate', ({ nickname: otherName, score: otherScore }) => {
+      if (otherName !== nickname) {
+        opponentScore = otherScore;
+        updateOpponentScore();
+      }
+    });
 
     function drawApple(x, y, number, highlight = false) {
       const centerX = x * SIZE + SIZE / 2;
       const centerY = y * SIZE + SIZE / 2;
+
       ctx.beginPath();
       ctx.fillStyle = '#d62828';
       ctx.arc(centerX, centerY, SIZE / 2 - 3, 0, Math.PI * 2);
       ctx.fill();
+
       ctx.beginPath();
       ctx.fillStyle = '#4CAF50';
       ctx.ellipse(centerX + 6, centerY - SIZE / 2 + 10, 4, 8, -Math.PI / 6, 0, Math.PI * 2);
       ctx.fill();
+
       ctx.beginPath();
       ctx.strokeStyle = '#5e3023';
       ctx.lineWidth = 2;
       ctx.moveTo(centerX, centerY - SIZE / 2 + 6);
       ctx.lineTo(centerX, centerY - SIZE / 2 + 12);
       ctx.stroke();
+
       if (highlight) {
         ctx.beginPath();
         ctx.fillStyle = 'rgba(255, 255, 0, 0.8)';
         ctx.arc(centerX, centerY, SIZE / 2, 0, Math.PI * 2);
         ctx.fill();
       }
+
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 16px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(number, centerX, centerY);
+    }
+
+    function drawGrid() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          const num = grid[y][x];
+          if (num !== null) {
+            const isHighlighted = highlightArea && x >= highlightArea.minX && x <= highlightArea.maxX && y >= highlightArea.minY && y <= highlightArea.maxY;
+            drawApple(x, y, num, isHighlighted);
+          }
+        }
+      }
+
+      for (let i = 0; i < fallingApples.length; i++) {
+        const fa = fallingApples[i];
+        fa.y += fa.vy;
+        fa.vy += 0.4;
+        drawApple(fa.x, fa.y / SIZE, fa.number);
+      }
+
+      requestAnimationFrame(drawGrid);
+    }
+
+    function animateRemovedApples(coords) {
+      for (const [x, y] of coords) {
+        fallingApples.push({ x, y: y * SIZE, number: grid[y][x], vy: -5 });
+      }
+      setTimeout(() => {
+        fallingApples = [];
+      }, 1500);
+    }
+
+    function showPopup(x, y, count) {
+      popup.textContent = `+${count}`;
+      popup.style.left = x + 'px';
+      popup.style.top = y + 'px';
+      popup.style.display = 'block';
+      popup.style.opacity = 1;
+      setTimeout(() => popup.style.opacity = 0, 800);
+    }
+
+    function checkRegion(x1, y1, x2, y2) {
+      const minX = Math.min(x1, x2);
+      const maxX = Math.max(x1, x2);
+      const minY = Math.min(y1, y2);
+      const maxY = Math.max(y1, y2);
+      let sum = 0, coords = [];
+
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          if (grid[y][x] !== null) {
+            sum += grid[y][x];
+            coords.push([x, y]);
+          }
+        }
+      }
+
+      if (sum === 10) {
+        animateRemovedApples(coords);
+        coords.forEach(([x, y]) => grid[y][x] = null);
+        score += coords.length;
+        scoreEl.textContent = `Score: ${score}`;
+        sendScoreUpdate();
+        showPopup(endX * SIZE, endY * SIZE, coords.length);
+      }
     }
 
     canvas.addEventListener('pointerdown', e => {
@@ -189,71 +249,30 @@
       checkRegion(startX, startY, endX, endY);
     });
 
-    function checkRegion(x1, y1, x2, y2) {
-      const minX = Math.min(x1, x2);
-      const maxX = Math.max(x1, x2);
-      const minY = Math.min(y1, y2);
-      const maxY = Math.max(y1, y2);
-      let sum = 0, coords = [];
-      for (let y = minY; y <= maxY; y++) {
-        for (let x = minX; x <= maxX; x++) {
-          if (grid[y] && grid[y][x] !== null) {
-            sum += grid[y][x];
-            coords.push([x, y]);
-          }
+    function startTimer(seconds) {
+      let time = seconds;
+      timerEl.textContent = `Time: ${time}`;
+      timerInterval = setInterval(() => {
+        time--;
+        timerEl.textContent = `Time: ${time}`;
+        if (time <= 0) {
+          clearInterval(timerInterval);
+          alert(`Time's up! Final Score: ${score}`);
         }
-      }
-      if (sum === 10) {
-        animateRemovedApples(coords);
-        coords.forEach(([x, y]) => grid[y][x] = null);
-        score += coords.length;
-        document.getElementById('score').textContent = `Score: ${score}`;
-        updateHighscore();
-      }
+      }, 1000);
     }
 
-    function drawGrid() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      for (let y = 0; y < ROWS; y++) {
-        for (let x = 0; x < COLS; x++) {
-          const num = grid[y][x];
-          if (num !== null) {
-            const isHighlighted = highlightArea && x >= highlightArea.minX && x <= highlightArea.maxX && y >= highlightArea.minY && y <= highlightArea.maxY;
-            drawApple(x, y, num, isHighlighted);
-          }
-        }
-      }
-
-      for (let i = 0; i < fallingApples.length; i++) {
-        const fa = fallingApples[i];
-        fa.y += fa.vy;
-        fa.vy += 0.15;
-        drawApple(fa.x, fa.y / SIZE, fa.number);
-      }
-
+    function startGame() {
+      canvas.style.display = 'block';
+      score = 0;
+      scoreEl.textContent = 'Score: 0';
+      clearInterval(timerInterval);
+      startTimer(120);
       requestAnimationFrame(drawGrid);
     }
 
-    function animateRemovedApples(coords) {
-      for (const [x, y] of coords) {
-        fallingApples.push({ x, y: y * SIZE, number: grid[y][x], vy: -2 });
-      }
-      setTimeout(() => {
-        fallingApples = [];
-      }, 2000);
-    }
-
-    function startTimer(seconds) {
-      let time = seconds;
-      document.getElementById('timer').textContent = `Time: ${time}`;
-      const interval = setInterval(() => {
-        time--;
-        document.getElementById('timer').textContent = `Time: ${time}`;
-        if (time <= 0) {
-          clearInterval(interval);
-          endSinglePlayerGame();
-        }
-      }, 1000);
+    function resetGame() {
+      startGame();
     }
   </script>
 </body>
