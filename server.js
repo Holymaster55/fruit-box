@@ -2,14 +2,17 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
+const bodyParser = require('body-parser');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(bodyParser.json());
 
 const rooms = {};
+const highscoreMap = {};
 
 function generateSolvableGrid() {
   const COLS = 17;
@@ -47,8 +50,8 @@ io.on('connection', (socket) => {
     }
 
     rooms[roomCode].players.push({ id: socket.id, nickname, ready: false });
-    console.log(`👤 ${nickname} joined room ${roomCode}`);
     io.to(roomCode).emit('players', rooms[roomCode].players);
+    console.log(`👤 ${nickname} joined room ${roomCode}`);
   });
 
   socket.on('ready', ({ roomCode }) => {
@@ -56,10 +59,7 @@ io.on('connection', (socket) => {
     if (!room) return;
 
     const player = room.players.find(p => p.id === socket.id);
-    if (player) {
-      player.ready = true;
-      console.log(`✅ ${player.nickname} is ready in room ${roomCode}`);
-    }
+    if (player) player.ready = true;
 
     const readyStates = room.players.map(p => `${p.nickname}: ${p.ready}`).join(', ');
     console.log(`📋 Ready check in room ${roomCode}: ${readyStates}`);
@@ -90,6 +90,31 @@ io.on('connection', (socket) => {
     }
     console.log(`🔴 Disconnected: ${socket.id}`);
   });
+});
+
+// === Highscore Routes ===
+app.post('/highscore', (req, res) => {
+  const { nickname, score } = req.body;
+  if (!nickname || typeof score !== 'number') return res.sendStatus(400);
+
+  if (!highscoreMap[nickname] || score > highscoreMap[nickname]) {
+    highscoreMap[nickname] = score;
+  }
+
+  res.sendStatus(200);
+});
+
+app.get('/highscore/:nickname', (req, res) => {
+  const nickname = req.params.nickname;
+  res.json({ nickname, highscore: highscoreMap[nickname] || 0 });
+});
+
+app.get('/highscores', (req, res) => {
+  const highscores = Object.entries(highscoreMap)
+    .map(([nickname, score]) => ({ nickname, score }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 20);
+  res.json(highscores);
 });
 
 const PORT = process.env.PORT || 3000;
