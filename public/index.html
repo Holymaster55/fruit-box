@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fruit Box - Multiplayer</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin: 0; }
+    canvas { border: 2px solid #444; touch-action: none; display: none; margin-top: 10px; background-color: #f2f2f2; }
+    #score, #timer { font-size: 1.2rem; margin: 10px; }
+    #popup { position: absolute; color: green; font-weight: bold; display: none; pointer-events: none; }
+    button, input { margin: 5px; padding: 10px 20px; font-size: 1rem; }
+    #startBtn:disabled { opacity: 0.5; }
+    #multiplayerForm { margin-top: 20px; }
+    #readyBtn { display: none; }
+    #opponentScore { font-size: 1.2rem; margin: 10px; color: #666; }
+  </style>
+</head>
+<body>
+  <h1>Fruit Box</h1>
+
+  <div id="multiplayerForm">
+    <input type="text" id="nickname" placeholder="Enter your nickname" />
+    <input type="text" id="roomCode" placeholder="Enter room code" />
+    <button onclick="joinRoom()">Join Room</button>
+  </div>
+
+  <div id="score">Score: 0</div>
+  <div id="opponentScore"></div>
+  <div id="timer">Time: 120</div>
+  <button id="startBtn" onclick="startGame()">Start</button>
+  <button onclick="resetGame()">Reset</button>
+  <button id="readyBtn" onclick="readyUp()">I'm Ready!</button>
+
+  <canvas id="game" width="578" height="340"></canvas>
+  <div id="popup">+1</div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+
+    let multiplayer = false;
+    let nickname = "";
+    let roomCode = "";
+    let ready = false;
+    let opponentName = "";
+    let opponentScore = 0;
+    let sharedGrid = null;
+    let score = 0;
+
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const timerEl = document.getElementById('timer');
+    const popup = document.getElementById('popup');
+
+    const COLS = 17;
+    const ROWS = 10;
+    const SIZE = 34;
+
+    let grid = [];
+    let startX, startY, endX, endY;
+    let timerInterval;
+    let isDragging = false;
+    let highlightArea = null;
+    let fallingApples = [];
+
+    function joinRoom() {
+      nickname = document.getElementById('nickname').value.trim();
+      roomCode = document.getElementById('roomCode').value.trim();
+      if (!nickname || !roomCode) {
+        alert("Please enter both a nickname and room code.");
+        return;
+      }
+      multiplayer = true;
+      socket.emit('join', { nickname, roomCode });
+      document.getElementById('multiplayerForm').style.display = 'none';
+      document.getElementById('startBtn').style.display = 'none';
+      document.querySelector('button[onclick="resetGame()"]')?.remove();
+      document.getElementById('readyBtn').style.display = 'inline-block';
+    }
+
+    function readyUp() {
+      ready = true;
+      document.getElementById('readyBtn').disabled = true;
+      document.getElementById('readyBtn').innerText = "Waiting for other players...";
+      socket.emit('ready', { roomCode });
+    }
+
+    socket.on('startGame', (data) => {
+      alert('All players ready! Game starting...');
+      sharedGrid = data.grid;
+      grid = sharedGrid;
+      startGame();
+    });
+
+    socket.on('players', players => {
+      const other = players.find(p => p.nickname !== nickname);
+      opponentName = other ? other.nickname : "";
+      updateOpponentScore();
+    });
+
+    function updateOpponentScore() {
+      if (opponentName) {
+        document.getElementById('opponentScore').innerText = `${opponentName}'s Score: ${opponentScore}`;
+      }
+    }
+
+    function sendScoreUpdate() {
+      if (multiplayer) {
+        socket.emit('scoreUpdate', { roomCode, nickname, score });
+      }
+    }
+
+    socket.on('scoreUpdate', ({ nickname: otherName, score: otherScore }) => {
+      if (otherName !== nickname) {
+        opponentScore = otherScore;
+        updateOpponentScore();
+      }
+    });
+
+    function drawApple(x, y, number, highlight = false) {
+      const centerX = x * SIZE + SIZE / 2;
+      const centerY = y * SIZE + SIZE / 2;
+
+      ctx.beginPath();
+      ctx.fillStyle = '#d62828';
+      ctx.arc(centerX, centerY, SIZE / 2 - 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.fillStyle = '#4CAF50';
+      ctx.ellipse(centerX + 6, centerY - SIZE / 2 + 10, 4, 8, -Math.PI / 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.strokeStyle = '#5e3023';
+      ctx.lineWidth = 2;
+      ctx.moveTo(centerX, centerY - SIZE / 2 + 6);
+      ctx.lineTo(centerX, centerY - SIZE / 2 + 12);
+      ctx.stroke();
+
+      if (highlight) {
+        ctx.beginPath();
+        ctx.fillStyle = 'rgba(255, 255, 0, 0.8)';
+        ctx.arc(centerX, centerY, SIZE / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(number, centerX, centerY);
+    }
+
+    function drawGrid() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          const num = grid[y][x];
+          if (num !== null) {
+            const isHighlighted = highlightArea && x >= highlightArea.minX && x <= highlightArea.maxX && y >= highlightArea.minY && y <= highlightArea.maxY;
+            drawApple(x, y, num, isHighlighted);
+          }
+        }
+      }
+
+      for (let i = 0; i < fallingApples.length; i++) {
+        const fa = fallingApples[i];
+        fa.y += fa.vy;
+        fa.vy += 0.4;
+        drawApple(fa.x, fa.y / SIZE, fa.number);
+      }
+
+      requestAnimationFrame(drawGrid);
+    }
+
+    function animateRemovedApples(coords) {
+      for (const [x, y] of coords) {
+        fallingApples.push({ x, y: y * SIZE, number: grid[y][x], vy: -5 });
+      }
+      setTimeout(() => {
+        fallingApples = [];
+      }, 1500);
+    }
+
+    function showPopup(x, y, count) {
+      popup.textContent = `+${count}`;
+      popup.style.left = x + 'px';
+      popup.style.top = y + 'px';
+      popup.style.display = 'block';
+      popup.style.opacity = 1;
+      setTimeout(() => popup.style.opacity = 0, 800);
+    }
+
+    function checkRegion(x1, y1, x2, y2) {
+      const minX = Math.min(x1, x2);
+      const maxX = Math.max(x1, x2);
+      const minY = Math.min(y1, y2);
+      const maxY = Math.max(y1, y2);
+      let sum = 0, coords = [];
+
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          if (grid[y][x] !== null) {
+            sum += grid[y][x];
+            coords.push([x, y]);
+          }
+        }
+      }
+
+      if (sum === 10) {
+        animateRemovedApples(coords);
+        coords.forEach(([x, y]) => grid[y][x] = null);
+        score += coords.length;
+        scoreEl.textContent = `Score: ${score}`;
+        sendScoreUpdate();
+        showPopup(endX * SIZE, endY * SIZE, coords.length);
+      }
+    }
+
+    canvas.addEventListener('pointerdown', e => {
+      const rect = canvas.getBoundingClientRect();
+      startX = Math.floor((e.clientX - rect.left) / SIZE);
+      startY = Math.floor((e.clientY - rect.top) / SIZE);
+      isDragging = true;
+    });
+
+    canvas.addEventListener('pointermove', e => {
+      if (!isDragging) return;
+      const rect = canvas.getBoundingClientRect();
+      endX = Math.floor((e.clientX - rect.left) / SIZE);
+      endY = Math.floor((e.clientY - rect.top) / SIZE);
+      highlightArea = {
+        minX: Math.min(startX, endX),
+        maxX: Math.max(startX, endX),
+        minY: Math.min(startY, endY),
+        maxY: Math.max(startY, endY)
+      };
+    });
+
+    canvas.addEventListener('pointerup', e => {
+      isDragging = false;
+      highlightArea = null;
+      const rect = canvas.getBoundingClientRect();
+      endX = Math.floor((e.clientX - rect.left) / SIZE);
+      endY = Math.floor((e.clientY - rect.top) / SIZE);
+      checkRegion(startX, startY, endX, endY);
+    });
+
+    function startTimer(seconds) {
+      let time = seconds;
+      timerEl.textContent = `Time: ${time}`;
+      timerInterval = setInterval(() => {
+        time--;
+        timerEl.textContent = `Time: ${time}`;
+        if (time <= 0) {
+          clearInterval(timerInterval);
+          alert(`Time's up! Final Score: ${score}`);
+        }
+      }, 1000);
+    }
+
+    function startGame() {
+      canvas.style.display = 'block';
+      score = 0;
+      scoreEl.textContent = 'Score: 0';
+      clearInterval(timerInterval);
+      startTimer(120);
+      requestAnimationFrame(drawGrid);
+    }
+
+    function resetGame() {
+      startGame();
+    }
+  </script>
+</body>
+</html>
