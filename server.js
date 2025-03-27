@@ -1,3 +1,4 @@
+
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -45,11 +46,11 @@ io.on('connection', (socket) => {
     if (!rooms[roomCode]) {
       rooms[roomCode] = {
         players: [],
-        grid: generateSolvableGrid()
+        grid: generateSolvableGrid(),
       };
     }
 
-    rooms[roomCode].players.push({ id: socket.id, nickname, ready: false });
+    rooms[roomCode].players.push({ id: socket.id, nickname, score: 0, ready: false });
     io.to(roomCode).emit('players', rooms[roomCode].players);
     console.log(`👤 ${nickname} joined room ${roomCode}`);
   });
@@ -58,13 +59,13 @@ io.on('connection', (socket) => {
     const room = rooms[roomCode];
     if (!room) return;
 
-    const player = room.players.find(p => p.id === socket.id);
+    const player = room.players.find((p) => p.id === socket.id);
     if (player) player.ready = true;
 
-    const readyStates = room.players.map(p => `${p.nickname}: ${p.ready}`).join(', ');
+    const readyStates = room.players.map((p) => `${p.nickname}: ${p.ready}`).join(', ');
     console.log(`📋 Ready check in room ${roomCode}: ${readyStates}`);
 
-    const allReady = room.players.length > 1 && room.players.every(p => p.ready);
+    const allReady = room.players.length > 1 && room.players.every((p) => p.ready);
     if (allReady) {
       console.log(`🚀 All players in room ${roomCode} are ready. Starting game.`);
       io.to(roomCode).emit('startGame', { grid: room.grid });
@@ -72,7 +73,25 @@ io.on('connection', (socket) => {
   });
 
   socket.on('scoreUpdate', ({ roomCode, nickname, score }) => {
-    socket.to(roomCode).emit('scoreUpdate', { nickname, score });
+    const room = rooms[roomCode];
+    if (!room) return;
+
+    const player = room.players.find((p) => p.nickname === nickname);
+    if (player) {
+      player.score = score;
+    }
+
+    io.to(roomCode).emit('players', room.players);  // Emit all players' scores to all clients in the room
+  });
+
+  socket.on('restart', ({ roomCode }) => {
+    const room = rooms[roomCode];
+    if (room) {
+      room.players.forEach((player) => {
+        player.score = 0;  // Reset each player's score
+      });
+      io.to(roomCode).emit('startGame', { grid: room.grid });
+    }
   });
 
   socket.on('disconnect', () => {
@@ -80,7 +99,7 @@ io.on('connection', (socket) => {
       const room = rooms[roomCode];
       if (!room) continue;
 
-      room.players = room.players.filter(p => p.id !== socket.id);
+      room.players = room.players.filter((p) => p.id !== socket.id);
       io.to(roomCode).emit('players', room.players);
 
       if (room.players.length === 0) {
@@ -121,3 +140,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🌍 Server running at http://localhost:${PORT}`);
 });
+
+

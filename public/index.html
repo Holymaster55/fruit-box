@@ -5,15 +5,65 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fruit Box - Multiplayer</title>
   <style>
-    body { font-family: sans-serif; text-align: center; margin: 0; }
-    canvas { border: 2px solid #444; touch-action: none; display: none; margin-top: 10px; background-color: #f2f2f2; }
-    #score, #timer { font-size: 1.2rem; margin: 10px; }
-    #popup { position: absolute; color: green; font-weight: bold; display: none; pointer-events: none; }
-    button, input { margin: 5px; padding: 10px 20px; font-size: 1rem; }
-    #startBtn:disabled { opacity: 0.5; }
-    #multiplayerForm { margin-top: 20px; }
-    #readyBtn { display: none; }
-    #opponentScore { font-size: 1.2rem; margin: 10px; color: #666; }
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    canvas {
+      border: 2px solid #444;
+      touch-action: none;
+      margin-top: 20px;
+      background-color: #f2f2f2;
+    }
+    #score, #timer {
+      font-size: 1.2rem;
+      margin: 10px;
+    }
+    #popup {
+      position: absolute;
+      color: green;
+      font-weight: bold;
+      display: none;
+      pointer-events: none;
+    }
+    button, input {
+      margin: 5px;
+      padding: 10px 20px;
+      font-size: 1rem;
+    }
+    #startBtn:disabled {
+      opacity: 0.5;
+    }
+    #multiplayerForm {
+      margin-top: 20px;
+    }
+    #readyBtn {
+      display: none;
+    }
+    #opponentScore {
+      font-size: 1.2rem;
+      margin: 10px;
+      color: #666;
+    }
+    /* Center the game grid */
+    #game-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 100%;
+      height: 100%;
+    }
+    #playersList {
+      font-size: 1rem;
+      margin-top: 20px;
+      color: #666;
+    }
   </style>
 </head>
 <body>
@@ -26,14 +76,17 @@
   </div>
 
   <div id="score">Score: 0</div>
-  <div id="opponentScore"></div>
   <div id="timer">Time: 120</div>
-  <button id="startBtn" onclick="startGame()">Start</button>
-  <button onclick="resetGame()">Reset</button>
+  <div id="opponentScore"></div>
   <button id="readyBtn" onclick="readyUp()">I'm Ready!</button>
 
-  <canvas id="game" width="578" height="340"></canvas>
+  <div id="game-container">
+    <canvas id="game" width="578" height="340"></canvas>
+  </div>
+
   <div id="popup">+1</div>
+  <div id="playersList"></div> <!-- Display list of players and scores -->
+  <button id="restartBtn" onclick="restartGame()" style="display: none;">Restart Game</button> <!-- Restart Button -->
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
@@ -53,6 +106,8 @@
     const scoreEl = document.getElementById('score');
     const timerEl = document.getElementById('timer');
     const popup = document.getElementById('popup');
+    const playersListEl = document.getElementById('playersList');
+    const restartBtn = document.getElementById('restartBtn');
 
     const COLS = 17;
     const ROWS = 10;
@@ -75,8 +130,6 @@
       multiplayer = true;
       socket.emit('join', { nickname, roomCode });
       document.getElementById('multiplayerForm').style.display = 'none';
-      document.getElementById('startBtn').style.display = 'none';
-      document.querySelector('button[onclick="resetGame()"]')?.remove();
       document.getElementById('readyBtn').style.display = 'inline-block';
     }
 
@@ -98,12 +151,22 @@
       const other = players.find(p => p.nickname !== nickname);
       opponentName = other ? other.nickname : "";
       updateOpponentScore();
+      updatePlayersList(players);
     });
 
     function updateOpponentScore() {
       if (opponentName) {
         document.getElementById('opponentScore').innerText = `${opponentName}'s Score: ${opponentScore}`;
       }
+    }
+
+    function updatePlayersList(players) {
+      playersListEl.innerHTML = '';  // Clear previous player list
+      players.forEach(player => {
+        const playerDiv = document.createElement('div');
+        playerDiv.innerText = `${player.nickname}: ${player.score}`;
+        playersListEl.appendChild(playerDiv);
+      });
     }
 
     function sendScoreUpdate() {
@@ -258,6 +321,7 @@
         if (time <= 0) {
           clearInterval(timerInterval);
           alert(`Time's up! Final Score: ${score}`);
+          showRestartButton();
         }
       }, 1000);
     }
@@ -274,6 +338,16 @@
     function resetGame() {
       startGame();
     }
+
+    function restartGame() {
+      socket.emit('restart', { roomCode });
+    }
+
+    function showRestartButton() {
+      restartBtn.style.display = 'inline-block';
+    }
+
   </script>
 </body>
 </html>
+
