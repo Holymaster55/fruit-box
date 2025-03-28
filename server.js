@@ -1,4 +1,3 @@
-
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -87,12 +86,19 @@ io.on('connection', (socket) => {
   socket.on('restart', ({ roomCode }) => {
     const room = rooms[roomCode];
     if (room) {
+      // Generate a new grid for the restarted game
+      room.grid = generateSolvableGrid();
+  
+      // Reset each player's score
       room.players.forEach((player) => {
-        player.score = 0;  // Reset each player's score
+        player.score = 0;
       });
+  
+      // Emit the new grid to all players to start the new game
       io.to(roomCode).emit('startGame', { grid: room.grid });
     }
   });
+  
 
   socket.on('disconnect', () => {
     for (const roomCode in rooms) {
@@ -140,5 +146,3 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🌍 Server running at http://localhost:${PORT}`);
 });
-
-
